@@ -1,0 +1,197 @@
+#############################################
+# Amplicon sequencing processing pipeline   #
+# Used for Pair End reads                   #
+# Burst for closed-reference clustering     #
+# Winner take all for combining two targets #
+#############################################
+
+# This is a Snakemake pipeline for processing amplicon sequencing data based on 
+# illumina two-step library prep method. The reading direction is fixed.
+# So Read1 only start from the forward primer and Read2 only start from the reverse primer, 
+# not vice versa.
+
+# In order to aid the comparison with DNB-based PE data, I have commented out instead
+# of delete the command line
+
+# There is only one type of amplicons appears in the PE data:
+	# TYPE 1: Read1-forward primer-insert-reverse primer-Read2
+# See the other snakemake file "snakemake_amplicon_pe" for what have in DNB-based method.
+# So for reference-based clustering, we only need the pairwised alignment for the profile.
+
+# You will need the sequence of the forward and reverse primers (or the conservative region
+# you like to trim off). These primers are different based on the target amplified.
+# Change the primer sequences in config.yaml to the one you used (and ask around if you don't know).
+# Also check if you have the right Burst database (bacteria or fungi?).
+# Check cluster.yaml if you use qsub.
+
+# Get the sample label from data/samples
+# The sample file should be in the format [SampleName].[ReadDirection].fq.gz
+# Put all sample files in data/samples
+# A sample should have two corresponding files.
+
+configfile: 'config.yaml'
+
+import fnmatch
+import os
+SAMPLES = {}
+sampleNames = []
+for file in os.listdir('data/samples/'):
+	if fnmatch.fnmatch(file, '*.fq'):
+		string = file.split('.')
+		sampleNames.append(string[0])
+sampleNames = tuple(set(sampleNames))
+for names in sampleNames:
+	SAMPLES[names] = []
+for file in os.listdir('data/samples/'):
+	if fnmatch.fnmatch(file, '*.fq'):
+		string = file.split('.')
+		SAMPLES[string[0]].append('data/samples/' + file)
+for key in SAMPLES.keys():
+	SAMPLES[key].sort()
+
+# Target of this pipeline: all samples in one profile
+rule target:
+	input:
+		'data/combined.biom',
+		'data/combined.taxa.biom',
+		'data/combined.taxa.tsv'
+		
+# Define the amplicon the PE data (as for illumina data, we do not need to find the reading direction)	
+rule direction:
+	input:
+		lambda wildcards: SAMPLES[wildcards.sample]
+	output:
+		r1fw = 'data/split_reads/{sample}.r1fw.fq',
+		r2rv = 'data/split_reads/{sample}.r2rv.fq'
+		#r1rv = 'data/split_reads/{sample}.r1rv.fq', # Not suppose to exist in two-steps method
+		#r2fw = 'data/split_reads/{sample}.r2fw.fq'  # Not suppose to exist in two-steps method
+	params:
+		fw=config['primers']['fw'],
+		rv=config['primers']['rv']
+	log:
+		'logs/split_reads/{sample}.log'
+	threads: 2
+	run:
+		base = {'A':'T','T':'A','C':'G','G':'C','R':'Y','Y':'R','K':'M','M':'K','S':'S','W':'W','B':'V','V':'B','D':'H','H':'D','N':'N'}
+		fwrc = ''.join([base[i] for i in list({params.fw})[0][::-1]])
+		rvrc = ''.join([base[i] for i in list({params.rv})[0][::-1]])
+		shell('cutadapt {input[0]} {input[1]} -g {params.fw} -a rvrc -G {params.rv} -A fwrc -n 2 --discard-untrimmed -e 0.1 -j {threads} -o {output.r1fw} -p {output.r2rv} > {log}'.replace('fwrc', fwrc).replace('rvrc', rvrc))
+		#shell('cutadapt {input[0]} {input[1]} -g {params.rv} -a fwrc -G {params.fw} -A rvrc -n 2 --discard-untrimmed -e 0.1 -j {threads} -o {output.r1rv} -p {output.r2fw} >> {log}'.replace('rvrc', rvrc).replace('fwrc', fwrc))
+
+# Remove low quality reads		
+rule quality:
+	input:
+		r1fw = 'data/split_reads/{sample}.r1fw.fq',
+		r2rv = 'data/split_reads/{sample}.r2rv.fq',
+		#r1rv = 'data/split_reads/{sample}.r1rv.fq',
+		#r2fw = 'data/split_reads/{sample}.r2fw.fq'
+	output:
+		r1fw_qc='data/qc_reads/{sample}.r1fw.qc.fq',
+		r2rv_temp=temp('data/qc_reads/{sample}.r2rv.temp'),
+		r2rv_qc='data/qc_reads/{sample}.r2rv.qc.fq',
+		#r1rv_temp=temp('data/qc_reads/{sample}.r1rv.temp'),
+		#r1rv_qc='data/qc_reads/{sample}.r1rv.qc.fq',
+		#r2fw_qc='data/qc_reads/{sample}.r2fw.qc.fq'
+	log:
+		'logs/qc_reads/{sample}.log'
+	threads: 2
+	run:
+		shell('sickle pe -f {input.r1fw} -r {input.r2rv} -o {output.r1fw_qc} -p {output.r2rv_temp} -t sanger -s single.fq > {log}')
+		#shell('sickle pe -f {input.r1rv} -r {input.r2fw} -o {output.r1rv_temp} -p {output.r2fw_qc} -t sanger -s single.fq >> {log}')
+		shell('seqtk seq -r {output.r2rv_temp} > {output.r2rv_qc}')
+		#shell('seqtk seq -r {output.r1rv_temp} > {output.r1rv_qc}')
+		shell('rm -f single.fq')
+
+# Trim off sequences not in database and convert to FASTA
+rule trim_tail:
+	input:
+		r1fw_qc='data/qc_reads/{sample}.r1fw.qc.fq',
+		r2rv_qc='data/qc_reads/{sample}.r2rv.qc.fq',
+		#r1rv_qc='data/qc_reads/{sample}.r1rv.qc.fq',
+		#r2fw_qc='data/qc_reads/{sample}.r2fw.qc.fq'
+	output:
+		r1fw_qc=temp('data/qc_reads/{sample}.r1fw.qc.fa'),
+		r2rv_qc=temp('data/qc_reads/{sample}.r2rv.qc.fa'),
+		#r1rv_qc=temp('data/qc_reads/{sample}.r1rv.qc.fa'),
+		#r2fw_qc=temp('data/qc_reads/{sample}.r2fw.qc.fa')
+	params:
+		fw_trim = config['trim']['fw'],
+		rv_trim = config['trim']['rv']
+	run:
+		shell('seqtk trimfq -b {params.fw_trim} {input.r1fw_qc} | seqtk seq -A -L 50 - > {output.r1fw_qc}')
+		shell('seqtk trimfq -e {params.rv_trim} {input.r2rv_qc} | seqtk seq -A -L 50 - > {output.r2rv_qc}')
+		#shell('seqtk trimfq -e {params.rv_trim} {input.r1rv_qc} | seqtk seq -A -L 50 - > {output.r1rv_qc}')
+		#shell('seqtk trimfq -b {params.fw_trim} {input.r2fw_qc} | seqtk seq -A -L 50 - > {output.r2fw_qc}')
+		
+# Align reads to the database
+rule align:
+	input:
+		r1fw_qc=temp('data/qc_reads/{sample}.r1fw.qc.fa'),
+		r2rv_qc=temp('data/qc_reads/{sample}.r2rv.qc.fa'),
+		#r1rv_qc=temp('data/qc_reads/{sample}.r1rv.qc.fa'),
+		#r2fw_qc=temp('data/qc_reads/{sample}.r2fw.qc.fa')
+	output:
+		r1fw_aln='data/alignments/{sample}.r1fw.b6',
+		r2rv_aln='data/alignments/{sample}.r2rv.b6',
+		#r1rv_aln='data/alignments/{sample}.r1rv.b6',
+		#r2fw_aln='data/alignments/{sample}.r2fw.b6'
+	params:
+		acx=config['database']['acx'],
+		edx=config['database']['edx'],
+		mode=config['align']['mode'],
+		id=config['align']['id']
+	log:
+		'logs/alignments/{sample}.log'
+	threads: 4
+	run:
+		shell('burst12 -q {input.r1fw_qc} -a {params.acx} -r {params.edx} -o {output.r1fw_aln} -i {params.id} -m {params.mode} -t {threads} > {log}')
+		shell('burst12 -q {input.r2rv_qc} -a {params.acx} -r {params.edx} -o {output.r2rv_aln} -i {params.id} -m {params.mode} -t {threads} >> {log}')
+		#shell('burst12 -q {input.r1rv_qc} -a {params.acx} -r {params.edx} -o {output.r1rv_aln} -i {params.id} -m {params.mode -t {threads} >> {log}')
+		#shell('burst12 -q {input.r2fw_qc} -a {params.acx} -r {params.edx} -o {output.r2fw_aln} -i {params.id} -m {params.mode -t {threads} >> {log}')
+
+# Keep the paired alignments
+rule keep_paired:
+	input:
+		r1fw_aln='data/alignments/{sample}.r1fw.b6',
+		r2rv_aln='data/alignments/{sample}.r2rv.b6',
+		#r1rv_aln='data/alignments/{sample}.r1rv.b6',
+		#r2fw_aln='data/alignments/{sample}.r2fw.b6'
+	output:
+		fw_aln='data/alignments/{sample}.fw.b6',
+		#rv_aln='data/alignments/{sample}.rv.b6'
+	run:
+		shell('amplicon_keepPairAln.py -i {input.r1fw_aln},{input.r2rv_aln} -o {output.fw_aln}')
+		#shell('amplicon_keepPairAln.py -i {input.r1rv_aln},{input.r2fw_aln} -o {output.rv_aln}')
+
+# Combine alignments using winner take all method
+rule winnerTakeAll:
+	input:
+		fw_aln='data/alignments/{sample}.fw.b6',
+		#rv_aln='data/alignments/{sample}.rv.b6'
+	output:
+		tsv='data/profiles/{sample}.tsv',
+		biom='data/profiles/{sample}.biom'
+	params:
+		sampleName='{sample}'
+	log:
+		'logs/winnerTakeAll/{sample}.log'
+	shell:
+		'amplicon_winnerTakeAll.py -i {input.fw_aln} -sn {params.sampleName} -t {output.tsv} -b {output.biom} -g > {log}'
+
+# Concatenate all profiles into one
+# Add the taxonomy, and write to biom and tsv file	
+rule concat:
+	input:
+		expand('data/profiles/{sample}.biom', sample=SAMPLES)
+	output:
+		combined = 'data/combined.biom',
+		biom_taxa = 'data/combined.taxa.biom',
+		tsv_taxa = 'data/combined.taxa.tsv'
+	params:
+		taxa=config['database']['tax']
+	log:
+		'logs/concat/concate.log'
+	run:
+		shell('amplicon_concat.py -i {input} -biom_out {output.combined} > {log}')
+		shell('biom add-metadata -i {output.combined} -o {output.biom_taxa} --observation-metadata-fp {params.taxa} --observation-header OTUID,taxonomy --output-as-json --sc-separated taxonomy')
+		shell('biom convert -i {output.biom_taxa} -o {output.tsv_taxa} --to-tsv --header-key taxonomy')
