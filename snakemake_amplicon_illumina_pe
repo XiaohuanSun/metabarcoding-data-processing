@@ -176,7 +176,18 @@ rule winnerTakeAll:
 	log:
 		'logs/winnerTakeAll/{sample}.log'
 	shell:
-		'amplicon_winnerTakeAll.py -i {input.fw_aln} -sn {params.sampleName} -t {output.tsv} -b {output.biom} -g > {log}'
+		'amplicon_winnerTakeAll.py -i {input.fw_aln} -sn {params.sampleName} -t {output.tsv} -g > {log}'
+
+#Convert tsv into biom first
+rule convert:
+	input:
+		tsv = 'data/profiles/{sample}.tsv',
+	output:
+		biom = 'data/convert/{sample}.biom',
+	log:
+		'logs/convert/{sample}.log'
+	shell:
+		'biom convert -i {input.tsv} -o {output.biom} --table-type="OTU table" --to-json > {log}'
 
 # Concatenate all profiles into one
 # Add the taxonomy, and write to biom and tsv file	
