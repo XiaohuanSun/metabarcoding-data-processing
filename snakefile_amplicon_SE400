@@ -36,13 +36,13 @@
 # Put all sample files in data/samples
 # A sample should have one corresponding files
 
-configfile: 'config.yaml'
+configfile: 'config_SE400.yaml'
 
 import fnmatch
 import os
 SAMPLES = {}
 for file in os.listdir('data/samples/'):
-	if fnmatch.fnmatch(file, '*.fq'):
+	if fnmatch.fnmatch(file, '*.fq.gz'):
 		string = file.split('.')
 		sampleName = string[0]
 		SAMPLES[sampleName] = 'data/samples/' + file
