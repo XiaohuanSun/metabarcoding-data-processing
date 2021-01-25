@@ -1,5 +1,5 @@
 # this is python script.
-configfile: 'config_its2.yaml'
+configfile: 'config_PE200.yaml'
 
 import os
 import sys
