@@ -29,14 +29,14 @@
 # Put all sample files in data/samples
 # A sample should have two corresponding files.
 
-configfile: 'config.yaml'
+configfile: 'config_illumina_pe.yaml'
 
 import fnmatch
 import os
 SAMPLES = {}
 sampleNames = []
 for file in os.listdir('data/samples/'):
-	if fnmatch.fnmatch(file, '*.fq'):
+	if fnmatch.fnmatch(file, '*.fq.gz'):
 		string = file.split('.')
 		sampleNames.append(string[0])
 sampleNames = tuple(set(sampleNames))
