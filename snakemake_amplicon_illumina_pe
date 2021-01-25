@@ -36,18 +36,28 @@ import os
 SAMPLES = {}
 sampleNames = []
 for file in os.listdir('data/samples/'):
-	if fnmatch.fnmatch(file, '*.fq.gz'):
+	if fnmatch.fnmatch(file, '*.fastq.gz'):
 		string = file.split('.')
-		sampleNames.append(string[0])
+		filename_tmp = string[0]
+		string2 = filename_tmp.split('_')
+		filename_true = '_'.join(string2[:4])
+		sampleNames.append(filename_true)
+		#sampleNames.append(string[0])
 sampleNames = tuple(set(sampleNames))
+# print(sampleNames)
 for names in sampleNames:
 	SAMPLES[names] = []
 for file in os.listdir('data/samples/'):
-	if fnmatch.fnmatch(file, '*.fq'):
+	if fnmatch.fnmatch(file, '*.fastq.gz'):
 		string = file.split('.')
-		SAMPLES[string[0]].append('data/samples/' + file)
+		filename_tmp = string[0]
+		string2 = filename_tmp.split('_')
+		filename_true = '_'.join(string2[:4])
+		SAMPLES[filename_true].append('data/samples/' + file)
+		#SAMPLES[string[0]].append('data/samples/' + file)
 for key in SAMPLES.keys():
 	SAMPLES[key].sort()
+print(SAMPLES)
 
 # Target of this pipeline: all samples in one profile
 rule target:
@@ -126,8 +136,8 @@ rule trim_tail:
 # Align reads to the database
 rule align:
 	input:
-		r1fw_qc=temp('data/qc_reads/{sample}.r1fw.qc.fa'),
-		r2rv_qc=temp('data/qc_reads/{sample}.r2rv.qc.fa'),
+		r1fw_qc='data/qc_reads/{sample}.r1fw.qc.fa',
+		r2rv_qc='data/qc_reads/{sample}.r2rv.qc.fa',
 		#r1rv_qc=temp('data/qc_reads/{sample}.r1rv.qc.fa'),
 		#r2fw_qc=temp('data/qc_reads/{sample}.r2fw.qc.fa')
 	output:
@@ -170,7 +180,7 @@ rule winnerTakeAll:
 		#rv_aln='data/alignments/{sample}.rv.b6'
 	output:
 		tsv='data/profiles/{sample}.tsv',
-		biom='data/profiles/{sample}.biom'
+		#biom='data/profiles/{sample}.biom'
 	params:
 		sampleName='{sample}'
 	log:
@@ -193,7 +203,7 @@ rule convert:
 # Add the taxonomy, and write to biom and tsv file	
 rule concat:
 	input:
-		expand('data/profiles/{sample}.biom', sample=SAMPLES)
+		expand('data/convert/{sample}.biom', sample=SAMPLES)
 	output:
 		combined = 'data/combined.biom',
 		biom_taxa = 'data/combined.taxa.biom',
